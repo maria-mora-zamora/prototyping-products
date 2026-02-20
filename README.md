@@ -44,7 +44,6 @@ streamlit run model_applied.py
 
 ---
 
-
 ## Requirements
 
 - Python 3.10+ (tested with Python 3.12)
