@@ -16,21 +16,6 @@ Prototype of an AI-assisted dynamic budgeting feature for a banking app.
 
 ---
 
-## Requirements
-
-- Python 3.10+ (tested with Python 3.12)
-- Packages:
-  - streamlit
-  - pandas
-  - numpy
-
-Install dependencies:
-
-```bash
-pip install streamlit pandas numpy
-
---- 
-
 ## Data
 
 The original dataset is too large for GitHub, so this repository includes only a filtered subset for one user, stored in data/.
@@ -50,9 +35,25 @@ streamlit run model_applied.py
 
 ---
 
-Notes on reproducibility
+## Notes on reproducibility
 	•	The current month and forecast day can be changed in the sidebar.
 	•	The total budget is dynamic:
 	•	If Auto-allocate is ON, category budgets rescale automatically when the total budget changes.
 	•	If Auto-allocate is OFF, category budgets can be edited manually.
 	•	The forecasting method is based on a data-driven cumulative spending curve learned from historical months (statistical AI approach).
+
+---
+
+
+## Requirements
+
+- Python 3.10+ (tested with Python 3.12)
+- Packages:
+  - streamlit
+  - pandas
+  - numpy
+
+Install dependencies:
+
+```bash
+pip install streamlit pandas numpy
