@@ -1,3 +1,127 @@
+# Assignment 2
+
+# Priority-Aware Budget Assistant
+
+Prototype of an AI-assisted dynamic budgeting feature for a banking app.
+
+This project extends the original budgeting prototype with a **local LLM-based what-if planner**. Users can set a monthly budget, inspect current spending from real transaction history, forecast end-of-month spending, view reallocation suggestions, and then simulate a natural-language spending scenario such as:
+
+> Reduce Eating out by 40% and Shopping by 30%. Keep Savings unchanged.
+
+The app uses a **local LLM via Ollama** to convert that text into structured category-level adjustments, and then uses Python to recalculate the forecast and the reallocation plan.
+
+---
+
+## Main files
+
+- `app-LLM.py` → main Streamlit app for Assignment 2
+- `model_applied.py` → previous non-LLM version used as the base prototype
+- `data/transactions_user_24_ccnum_567868110212.csv` → filtered dataset for one user
+- `app.py`, `app2.py`, `app3.py`, `app4-simulation.py`, `app5-AI.py` → earlier iterations kept for traceability
+
+---
+
+## What the app does
+
+The app has five sections:
+
+1. **Budget setup**  
+   Users define a total monthly budget, category budgets, and category priorities.
+
+2. **Current spending**  
+   The app aggregates real transaction data up to a selected day of the month.
+
+3. **Data-driven forecast**  
+   The forecast estimates end-of-month spending using historical cumulative spending curves by category.
+
+4. **Reallocation recommendation**  
+   If a category is forecasted to overspend, the app suggests moving budget from lower-priority categories with remaining budget.
+
+5. **AI What-If Planner**  
+   A local LLM interprets a natural-language scenario and outputs structured percentage adjustments by category. Python then recalculates the forecast and compares the result before vs. after the scenario.
+
+---
+
+## Why the LLM feature is not trivial
+
+The LLM is not used as a simple chat interface. Instead, it is part of a multi-step pipeline:
+
+- the user writes a scenario in natural language
+- the local LLM converts that scenario into structured JSON adjustments
+- Python validates the categories and values
+- Python recalculates the forecast and reallocation plan using the LLM output
+- the UI displays the impact of the scenario
+
+This means the LLM output directly changes the system behaviour.
+
+---
+
+## Data
+
+The original dataset is too large for GitHub, so the repository only includes a filtered subset for one user.
+
+Expected path:
+
+`data/transactions_user_24_ccnum_567868110212.csv`
+
+If the file is renamed or moved, update the path in the sidebar input of the app.
+
+---
+
+## How to run
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Install and start Ollama, then pull the model used by the app:
+
+```bash
+ollama pull llama3.2:3b
+ollama run llama3.2:3b
+```
+
+In a second terminal, run the Streamlit app:
+
+```bash
+streamlit run app-LLM.py
+```
+
+---
+
+## Example scenario
+
+A good example to test the LLM feature is:
+
+```text
+Reduce Eating out by 40% and Shopping by 30%. Keep Savings unchanged.
+```
+
+This should generate category-level adjustments and produce a visible difference between the original forecast and the simulated forecast.
+
+---
+
+## Requirements
+
+- Python 3.10+
+- Streamlit
+- pandas
+- numpy
+- requests
+- Ollama installed locally
+
+---
+
+## Notes
+
+- The prototype uses a **local LLM**, so it does not require a paid API.
+- The forecasting logic and reallocation logic are deterministic Python components.
+- The LLM is only used for interpreting natural-language scenarios into structured inputs for the simulation.
+
+---
+
 # Priority-Aware Budget Assistant (Prototype)
 
 Prototype of an AI-assisted dynamic budgeting feature for a banking app.
