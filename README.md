@@ -121,6 +121,8 @@ This should generate category-level adjustments and produce a visible difference
 - The LLM is only used for interpreting natural-language scenarios into structured inputs for the simulation.
 
 ---
+# Assignment 2
+---
 
 # Priority-Aware Budget Assistant (Prototype)
 
