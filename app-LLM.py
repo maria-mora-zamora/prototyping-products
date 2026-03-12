@@ -15,7 +15,7 @@ st.caption("Data-driven budgeting prototype using real transaction history (1 us
 # -----------------------------
 # Local LLM config (Ollama)
 # -----------------------------
-OLLAMA_MODEL = "phi3:mini"
+OLLAMA_MODEL = "tinyllama"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 # -----------------------------
