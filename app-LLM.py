@@ -1,11 +1,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
 import json
 import re
-import os
-from openai import OpenAI
+
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 # -----------------------------
 # Page config
@@ -15,16 +14,9 @@ st.title("Priority-Aware Budget Assistant")
 st.caption("Data-driven budgeting prototype using real transaction history (1 user subset).")
 
 # -----------------------------
-# OpenAI config
+# Local HF model config
 # -----------------------------
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = "gpt-4o-mini"
-
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-
-# -----------------------------
-# Constants & mapping
-# -----------------------------
+HF_MODEL_ID = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 DAYS_IN_MONTH = 30  # simplification for prototype
 
 CATEGORY_MAP = {
@@ -58,11 +50,76 @@ def load_user_csv(path: str) -> pd.DataFrame:
     return df
 
 
+@st.cache_resource
+def load_llm():
+    tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_ID)
+    model = AutoModelForCausalLM.from_pretrained(
+        HF_MODEL_ID,
+        low_cpu_mem_usage=True
+    )
+
+    text_gen = pipeline(
+        "text-generation",
+        model=model,
+        tokenizer=tokenizer,
+        device_map="cpu"
+    )
+    return text_gen
+
+
+def clean_text(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    text = text.replace("\n", " ").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def extract_json_from_response(raw_text: str):
+    raw_text = raw_text.strip()
+
+    try:
+        return json.loads(raw_text)
+    except Exception:
+        pass
+
+    start = raw_text.find("{")
+    end = raw_text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = raw_text[start:end + 1]
+        return json.loads(candidate)
+
+    raise ValueError("No valid JSON found in model response.")
+
+
+def call_local_llm_json(prompt: str):
+    try:
+        generator = load_llm()
+
+        outputs = generator(
+            prompt,
+            max_new_tokens=220,
+            do_sample=False,
+            temperature=0.0,
+            return_full_text=False
+        )
+
+        raw_text = outputs[0]["generated_text"].strip()
+
+        if not raw_text:
+            return False, "The local model returned an empty response."
+
+        try:
+            parsed = extract_json_from_response(raw_text)
+            return True, parsed
+        except Exception:
+            return False, f"The model returned invalid JSON:\n\n{raw_text}"
+
+    except Exception as e:
+        return False, f"Local model inference failed: {str(e)}"
+
+
 def build_avg_cumulative_curve(df_train: pd.DataFrame) -> pd.DataFrame:
-    """
-    Build avg cumulative spend fraction per day per budget_category.
-    Output: budget_category, day, cum_frac
-    """
     if df_train.empty:
         return pd.DataFrame(columns=["budget_category", "day", "cum_frac"])
 
@@ -100,10 +157,6 @@ def build_avg_cumulative_curve(df_train: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_curve_frac(avg_curve: pd.DataFrame, category: str, day: int):
-    """
-    Return learned cum_frac for (category, day).
-    If exact day isn't available, use nearest earlier day; else nearest later day.
-    """
     c = avg_curve[avg_curve["budget_category"] == category]
     if c.empty:
         return None
@@ -124,10 +177,6 @@ def get_curve_frac(avg_curve: pd.DataFrame, category: str, day: int):
 
 
 def forecast_end_of_month(spent_so_far: float, frac, day: int):
-    """
-    Forecast using learned curve if available, otherwise fallback to simple pace.
-    Returns forecast and method label.
-    """
     if frac is None:
         return spent_so_far * (DAYS_IN_MONTH / max(day, 1)), "pace_fallback"
     return spent_so_far / frac, "curve"
@@ -144,10 +193,6 @@ def highlight_gap(val):
 
 
 def suggest_total_budget(df_current: pd.DataFrame, df_train: pd.DataFrame) -> float:
-    """
-    Choose a sensible default monthly budget from data.
-    For demo, we set it slightly BELOW baseline to trigger recommendations.
-    """
     cur_total = float(df_current["amt"].sum()) if not df_current.empty else np.nan
 
     if df_train.empty:
@@ -165,10 +210,6 @@ def suggest_total_budget(df_current: pd.DataFrame, df_train: pd.DataFrame) -> fl
 
 
 def suggest_transfers_to_target(budgets_df: pd.DataFrame, target_category: str, amount_needed: float) -> pd.DataFrame:
-    """
-    Suggest transfers from low-priority categories with remaining budget to the target category.
-    Cap reductions at 30% of donor budget, and never reduce below already-spent.
-    """
     if amount_needed <= 0:
         return pd.DataFrame()
 
@@ -208,60 +249,6 @@ def suggest_transfers_to_target(budgets_df: pd.DataFrame, target_category: str, 
     return out
 
 
-def clean_text(text: str) -> str:
-    if not isinstance(text, str):
-        return ""
-    text = text.replace("\n", " ").strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
-
-
-def extract_json_from_response(raw_text: str):
-    raw_text = raw_text.strip()
-    try:
-        return json.loads(raw_text)
-    except Exception:
-        pass
-
-    start = raw_text.find("{")
-    end = raw_text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = raw_text[start:end + 1]
-        return json.loads(candidate)
-
-    raise ValueError("No valid JSON found in model response.")
-
-
-def call_openai_json(prompt: str):
-    if client is None:
-        return False, "OPENAI_API_KEY is missing. Add it in Render Environment or in your local shell."
-
-    try:
-        response = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            temperature=0,
-            messages=[
-                {"role": "developer", "content": "Return only valid JSON. No markdown. No explanations outside JSON."},
-                {"role": "user", "content": prompt},
-            ],
-        )
-
-        raw_text = response.choices[0].message.content or ""
-        raw_text = raw_text.strip()
-
-        if not raw_text:
-            return False, "OpenAI returned an empty response."
-
-        try:
-            parsed = extract_json_from_response(raw_text)
-            return True, parsed
-        except Exception:
-            return False, f"The model returned invalid JSON:\n\n{raw_text}"
-
-    except Exception as e:
-        return False, f"OpenAI request failed: {str(e)}"
-
-
 def build_whatif_prompt(user_scenario: str, categories: list[str]):
     category_list = json.dumps(categories, ensure_ascii=False)
 
@@ -281,10 +268,12 @@ Rules:
 - Negative values mean reducing forecasted spending.
 - Positive values mean increasing forecasted spending.
 - Use decimal percentages.
-- If the user says "protect" a category, do not change it unless they also explicitly say to increase it.
+- If the user says "protect" or "keep unchanged" for a category, do not include that category in adjustments.
 - If the user says "reduce X by 30%", output -0.30.
 - If the user says "cut", interpret it as a reduction.
 - Keep the output conservative and literal.
+- Do not invent categories.
+- Do not include any explanation outside the JSON.
 
 Return exactly this JSON structure:
 {{
@@ -589,7 +578,7 @@ st.divider()
 # 5) AI What-If Planner
 # -----------------------------
 st.header("5) AI What-If Planner")
-st.caption("Describe a spending-change scenario in natural language. The LLM converts it into category-level percentage adjustments, and Python recalculates the forecast and the reallocation plan.")
+st.caption("Describe a spending-change scenario in natural language. The local model converts it into category-level percentage adjustments, and Python recalculates the forecast and the reallocation plan.")
 
 default_scenario = "Reduce Eating out by 40% and Shopping by 30%. Keep Savings unchanged."
 
@@ -603,12 +592,12 @@ scenario_text = st.text_area(
 if st.button("Simulate scenario"):
     prompt = build_whatif_prompt(scenario_text, cats_in_data)
 
-    with st.spinner("Interpreting scenario with OpenAI..."):
-        ok, llm_result = call_openai_json(prompt)
+    with st.spinner("Interpreting scenario with local model..."):
+        ok, llm_result = call_local_llm_json(prompt)
 
     if not ok:
         st.error(llm_result)
-        st.info("Make sure OPENAI_API_KEY is set in Render Environment or in your local shell.")
+        st.info("The first model load can take a while because the Space has to download the model.")
     else:
         scenario_summary = clean_text(llm_result.get("scenario_summary", ""))
         adjustments = llm_result.get("adjustments", {}) or {}

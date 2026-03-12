@@ -1,5 +1,8 @@
-streamlit
-pandas
-numpy
-requests
-openai
+streamlit==1.39.0
+pandas==2.2.2
+numpy==1.26.4
+transformers==4.48.3
+torch==2.2.2
+accelerate==1.2.1
+sentencepiece==0.2.0
+safetensors==0.5.2
