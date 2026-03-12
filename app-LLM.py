@@ -4,6 +4,8 @@ import numpy as np
 import requests
 import json
 import re
+import os
+from openai import OpenAI
 
 # -----------------------------
 # Page config
@@ -13,10 +15,12 @@ st.title("Priority-Aware Budget Assistant")
 st.caption("Data-driven budgeting prototype using real transaction history (1 user subset).")
 
 # -----------------------------
-# Local LLM config (Ollama)
+# OpenAI config
 # -----------------------------
-OLLAMA_MODEL = "tinyllama"
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = "gpt-4o-mini"
+
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # -----------------------------
 # Constants & mapping
@@ -228,24 +232,25 @@ def extract_json_from_response(raw_text: str):
     raise ValueError("No valid JSON found in model response.")
 
 
-def call_ollama_json(prompt: str):
+def call_openai_json(prompt: str):
+    if client is None:
+        return False, "OPENAI_API_KEY is missing. Add it in Render Environment or in your local shell."
+
     try:
-        response = requests.post(
-            OLLAMA_URL,
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-            },
-            timeout=120,
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            temperature=0,
+            messages=[
+                {"role": "developer", "content": "Return only valid JSON. No markdown. No explanations outside JSON."},
+                {"role": "user", "content": prompt},
+            ],
         )
 
-        if response.status_code != 200:
-            return False, f"Ollama error ({response.status_code}): {response.text}"
+        raw_text = response.choices[0].message.content or ""
+        raw_text = raw_text.strip()
 
-        raw_text = response.json().get("response", "").strip()
         if not raw_text:
-            return False, "Ollama returned an empty response."
+            return False, "OpenAI returned an empty response."
 
         try:
             parsed = extract_json_from_response(raw_text)
@@ -253,10 +258,8 @@ def call_ollama_json(prompt: str):
         except Exception:
             return False, f"The model returned invalid JSON:\n\n{raw_text}"
 
-    except requests.exceptions.ConnectionError:
-        return False, "No connection to Ollama. Make sure Ollama is installed, open, and running."
     except Exception as e:
-        return False, f"Request failed: {str(e)}"
+        return False, f"OpenAI request failed: {str(e)}"
 
 
 def build_whatif_prompt(user_scenario: str, categories: list[str]):
@@ -586,7 +589,7 @@ st.divider()
 # 5) AI What-If Planner
 # -----------------------------
 st.header("5) AI What-If Planner")
-st.caption("Describe a spending-change scenario in natural language. The local LLM converts it into category-level percentage adjustments, and Python recalculates the forecast and the reallocation plan.")
+st.caption("Describe a spending-change scenario in natural language. The LLM converts it into category-level percentage adjustments, and Python recalculates the forecast and the reallocation plan.")
 
 default_scenario = "Reduce Eating out by 40% and Shopping by 30%. Keep Savings unchanged."
 
@@ -600,12 +603,12 @@ scenario_text = st.text_area(
 if st.button("Simulate scenario"):
     prompt = build_whatif_prompt(scenario_text, cats_in_data)
 
-    with st.spinner("Interpreting scenario with local LLM..."):
-        ok, llm_result = call_ollama_json(prompt)
+    with st.spinner("Interpreting scenario with OpenAI..."):
+        ok, llm_result = call_openai_json(prompt)
 
     if not ok:
         st.error(llm_result)
-        st.info("Check that Ollama is running and that you already tested: ollama run llama3.2:3b")
+        st.info("Make sure OPENAI_API_KEY is set in Render Environment or in your local shell.")
     else:
         scenario_summary = clean_text(llm_result.get("scenario_summary", ""))
         adjustments = llm_result.get("adjustments", {}) or {}
