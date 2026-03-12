@@ -2,15 +2,22 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PIP_NO_CACHE_DIR=1
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://ollama.com/install.sh | sh
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8501
+RUN chmod +x start.sh
 
-CMD ["streamlit", "run", "app-LLM.py", "--server.port=8501", "--server.address=0.0.0.0"]
+EXPOSE 8501
+EXPOSE 11434
+
+CMD ["./start.sh"]

@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
 import json
 import re
-
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 # -----------------------------
 # Page config
@@ -14,10 +13,15 @@ st.title("Priority-Aware Budget Assistant")
 st.caption("Data-driven budgeting prototype using real transaction history (1 user subset).")
 
 # -----------------------------
-# Local HF model config
+# Local LLM config (Ollama)
 # -----------------------------
-HF_MODEL_ID = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-DAYS_IN_MONTH = 30  # simplification for prototype
+OLLAMA_MODEL = "tinyllama"
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+
+# -----------------------------
+# Constants & mapping
+# -----------------------------
+DAYS_IN_MONTH = 30
 
 CATEGORY_MAP = {
     "grocery_pos": "Groceries",
@@ -48,75 +52,6 @@ def load_user_csv(path: str) -> pd.DataFrame:
     df["day"] = df["trans_date_trans_time"].dt.day
     df["budget_category"] = df["category"].map(CATEGORY_MAP).fillna("Other")
     return df
-
-
-@st.cache_resource
-def load_llm():
-    tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_ID)
-    model = AutoModelForCausalLM.from_pretrained(
-        HF_MODEL_ID,
-        low_cpu_mem_usage=True
-    )
-
-    text_gen = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        device_map="cpu"
-    )
-    return text_gen
-
-
-def clean_text(text: str) -> str:
-    if not isinstance(text, str):
-        return ""
-    text = text.replace("\n", " ").strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
-
-
-def extract_json_from_response(raw_text: str):
-    raw_text = raw_text.strip()
-
-    try:
-        return json.loads(raw_text)
-    except Exception:
-        pass
-
-    start = raw_text.find("{")
-    end = raw_text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = raw_text[start:end + 1]
-        return json.loads(candidate)
-
-    raise ValueError("No valid JSON found in model response.")
-
-
-def call_local_llm_json(prompt: str):
-    try:
-        generator = load_llm()
-
-        outputs = generator(
-            prompt,
-            max_new_tokens=220,
-            do_sample=False,
-            temperature=0.0,
-            return_full_text=False
-        )
-
-        raw_text = outputs[0]["generated_text"].strip()
-
-        if not raw_text:
-            return False, "The local model returned an empty response."
-
-        try:
-            parsed = extract_json_from_response(raw_text)
-            return True, parsed
-        except Exception:
-            return False, f"The model returned invalid JSON:\n\n{raw_text}"
-
-    except Exception as e:
-        return False, f"Local model inference failed: {str(e)}"
 
 
 def build_avg_cumulative_curve(df_train: pd.DataFrame) -> pd.DataFrame:
@@ -249,6 +184,60 @@ def suggest_transfers_to_target(budgets_df: pd.DataFrame, target_category: str, 
     return out
 
 
+def clean_text(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    text = text.replace("\n", " ").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def extract_json_from_response(raw_text: str):
+    raw_text = raw_text.strip()
+
+    try:
+        return json.loads(raw_text)
+    except Exception:
+        pass
+
+    start = raw_text.find("{")
+    end = raw_text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = raw_text[start:end + 1]
+        return json.loads(candidate)
+
+    raise ValueError("No valid JSON found in model response.")
+
+
+def call_ollama_json(prompt: str):
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+            },
+            timeout=180,
+        )
+
+        if response.status_code != 200:
+            return False, f"Ollama error ({response.status_code}): {response.text}"
+
+        raw_text = response.json().get("response", "").strip()
+        if not raw_text:
+            return False, "Ollama returned an empty response."
+
+        try:
+            parsed = extract_json_from_response(raw_text)
+            return True, parsed
+        except Exception:
+            return False, f"The model returned invalid JSON:\n\n{raw_text}"
+
+    except Exception as e:
+        return False, f"Request failed: {str(e)}"
+
+
 def build_whatif_prompt(user_scenario: str, categories: list[str]):
     category_list = json.dumps(categories, ensure_ascii=False)
 
@@ -273,7 +262,6 @@ Rules:
 - If the user says "cut", interpret it as a reduction.
 - Keep the output conservative and literal.
 - Do not invent categories.
-- Do not include any explanation outside the JSON.
 
 Return exactly this JSON structure:
 {{
@@ -578,7 +566,7 @@ st.divider()
 # 5) AI What-If Planner
 # -----------------------------
 st.header("5) AI What-If Planner")
-st.caption("Describe a spending-change scenario in natural language. The local model converts it into category-level percentage adjustments, and Python recalculates the forecast and the reallocation plan.")
+st.caption("Describe a spending-change scenario in natural language. The local LLM converts it into category-level percentage adjustments, and Python recalculates the forecast and the reallocation plan.")
 
 default_scenario = "Reduce Eating out by 40% and Shopping by 30%. Keep Savings unchanged."
 
@@ -592,12 +580,12 @@ scenario_text = st.text_area(
 if st.button("Simulate scenario"):
     prompt = build_whatif_prompt(scenario_text, cats_in_data)
 
-    with st.spinner("Interpreting scenario with local model..."):
-        ok, llm_result = call_local_llm_json(prompt)
+    with st.spinner("Interpreting scenario with local Ollama model..."):
+        ok, llm_result = call_ollama_json(prompt)
 
     if not ok:
         st.error(llm_result)
-        st.info("The first model load can take a while because the Space has to download the model.")
+        st.info("The first request can take a while because the container may still be starting the model.")
     else:
         scenario_summary = clean_text(llm_result.get("scenario_summary", ""))
         adjustments = llm_result.get("adjustments", {}) or {}
