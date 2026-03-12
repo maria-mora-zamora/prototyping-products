@@ -1,14 +1,14 @@
 #!/bin/bash
 set -e
 
-# Arrancar servidor de Ollama en background
+# Start Ollama in the background
 ollama serve &
 
-# Esperar a que Ollama responda
+# Wait for Ollama to respond
 sleep 5
 
-# Descargar el modelo si no está
+# Download the model if it's not already downloaded
 ollama pull llama3.2:3b
 
-# Lanzar Streamlit
+# Launch Streamlit
 streamlit run app-LLM.py --server.port=8501 --server.address=0.0.0.0
